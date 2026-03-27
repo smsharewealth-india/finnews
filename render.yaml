@@ -2,13 +2,23 @@ services:
   - type: web
     name: finsights
     runtime: python
-    rootDir: .
-    buildCommand: |
-      pip install -r requirements.txt &&
-      npm install --prefix . &&
-      npm run build:css
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: SECRET_KEY
         generateValue: true
     autoDeploy: true
+```
+
+Click **Commit changes**.
+
+---
+
+### Step 4 — Trigger a new deploy on Render
+
+Go to your Render dashboard → FinSights service → click **Manual Deploy → Deploy latest commit**
+
+The build should now complete in 2–3 minutes with only:
+```
+pip install -r requirements.txt   ✅
+uvicorn app.main:app ...          ✅
