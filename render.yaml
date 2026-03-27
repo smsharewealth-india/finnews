@@ -2,7 +2,11 @@ services:
   - type: web
     name: finsights
     runtime: python
-    buildCommand: pip install -r requirements.txt && npm install && npm run build:css
+    rootDir: .
+    buildCommand: |
+      pip install -r requirements.txt &&
+      npm install --prefix . &&
+      npm run build:css
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: SECRET_KEY
