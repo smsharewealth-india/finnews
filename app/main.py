@@ -2,8 +2,10 @@
 FastAPI application entry point.
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from typing import Optional
+from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import init_db, SessionLocal
@@ -181,6 +183,7 @@ register_filters(public.templates)
 register_filters(admin.templates)
 
 
+# ── Health check ─────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -189,3 +192,137 @@ async def health_check():
         "scheduler_running": scheduler_service.is_running(),
         "cache_stats": cache_manager.get_cache_stats(),
     }
+
+
+# ── Public JSON API for n8n / external automation ────────────
+
+@app.get("/api/news")
+async def api_news(
+    category: Optional[str] = Query(None, description="Filter by category: market, sector, macro, regulation"),
+    limit: int = Query(20, ge=1, le=100, description="Number of articles to return"),
+):
+    """
+    Returns latest news from the in-memory cache as JSON.
+    Used by n8n and other automation tools.
+
+    Examples:
+      GET /api/news                     → all news, latest 20
+      GET /api/news?category=market     → market news only
+      GET /api/news?category=sector&limit=10
+    """
+    try:
+        all_news = cache_manager.get_all_news()  # returns list of news dicts from cache
+
+        # Filter by category if requested
+        if category:
+            all_news = [n for n in all_news if n.get("category", "").lower() == category.lower()]
+
+        # Sort by published date descending, newest first
+        all_news.sort(key=lambda x: x.get("published_at", "") or "", reverse=True)
+
+        # Slice to limit
+        news_slice = all_news[:limit]
+
+        # Return clean JSON — only fields useful for n8n
+        items = []
+        for n in news_slice:
+            items.append({
+                "id":           n.get("id"),
+                "title":        n.get("title", ""),
+                "summary":      n.get("summary", "") or n.get("content", ""),
+                "category":     n.get("category", ""),
+                "subcategory":  n.get("subcategory", ""),
+                "source":       n.get("source", ""),
+                "published_at": n.get("published_at", ""),
+                "is_featured":  n.get("is_featured", False),
+            })
+
+        return JSONResponse(content={
+            "status":  "ok",
+            "count":   len(items),
+            "category": category or "all",
+            "news":    items,
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/news/summary")
+async def api_news_summary():
+    """
+    Returns a compact summary of news counts per category.
+    Useful for n8n to check if fresh news is available before fetching.
+
+    Example response:
+      {
+        "status": "ok",
+        "total": 45,
+        "by_category": { "market": 12, "sector": 18, "macro": 10, "regulation": 5 },
+        "latest_title": "Nifty crosses 23000..."
+      }
+    """
+    try:
+        all_news = cache_manager.get_all_news()
+        by_cat = {}
+        for n in all_news:
+            cat = n.get("category", "unknown")
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+
+        # Get latest title
+        sorted_news = sorted(all_news, key=lambda x: x.get("published_at", "") or "", reverse=True)
+        latest_title = sorted_news[0].get("title", "") if sorted_news else ""
+
+        return JSONResponse(content={
+            "status":       "ok",
+            "total":        len(all_news),
+            "by_category":  by_cat,
+            "latest_title": latest_title,
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/news/market")
+async def api_market_news(limit: int = Query(15, ge=1, le=50)):
+    """Shortcut: GET /api/news/market — returns market category news only."""
+    all_news = cache_manager.get_all_news()
+    market = [n for n in all_news if n.get("category", "").lower() == "market"]
+    market.sort(key=lambda x: x.get("published_at", "") or "", reverse=True)
+    items = [
+        {
+            "title":        n.get("title", ""),
+            "summary":      n.get("summary", "") or n.get("content", ""),
+            "subcategory":  n.get("subcategory", ""),
+            "published_at": n.get("published_at", ""),
+            "is_featured":  n.get("is_featured", False),
+        }
+        for n in market[:limit]
+    ]
+    return JSONResponse(content={"status": "ok", "count": len(items), "news": items})
+
+
+@app.get("/api/news/sector")
+async def api_sector_news(limit: int = Query(15, ge=1, le=50)):
+    """Shortcut: GET /api/news/sector — returns sector category news only."""
+    all_news = cache_manager.get_all_news()
+    sector = [n for n in all_news if n.get("category", "").lower() == "sector"]
+    sector.sort(key=lambda x: x.get("published_at", "") or "", reverse=True)
+    items = [
+        {
+            "title":        n.get("title", ""),
+            "summary":      n.get("summary", "") or n.get("content", ""),
+            "subcategory":  n.get("subcategory", ""),
+            "published_at": n.get("published_at", ""),
+            "is_featured":  n.get("is_featured", False),
+        }
+        for n in sector[:limit]
+    ]
+    return JSONResponse(content={"status": "ok", "count": len(items), "news": items})
